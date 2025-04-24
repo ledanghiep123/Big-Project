@@ -8,26 +8,7 @@ TOP_N = 3
 OUTPUT_TOP_PLAYERS_FILE = 'top_3.txt'
 OUTPUT_STATS_FILE = 'results2.csv'
 OUTPUT_HISTOGRAM_DIR = 'histograms'
-KEY_TEAM_STATS = ['Gls', 'Ast', 'G+A', 'xG', 'xAG', 'PrgC', 'PrgP']
-
-def get_numeric_columns(df):
-    numeric_cols = []
-    for col in df.columns:
-        try:
-            pd.to_numeric(df[col], errors='raise')
-            if col not in ['Player', 'Nation', 'Pos', 'Squad', 'Age', 'Born', 'Min', 'Starts', 'MP', '90s']:
-                if df[col].dtype in [np.int64, np.float64] and df[col].std() < 10000 and df[col].max() < 50000:
-                    numeric_cols.append(col)
-        except (ValueError, TypeError):
-            try:
-                numeric_series = pd.to_numeric(df[col], errors='coerce')
-                if numeric_series.notna().sum() / len(df) > 0.5:
-                    if col not in ['Player', 'Nation', 'Pos', 'Squad', 'Age', 'Born', 'Min', 'Starts', 'MP', '90s']:
-                        if numeric_series.std() < 10000 and numeric_series.max() < 50000:
-                            numeric_cols.append(col)
-            except (ValueError, TypeError):
-                continue
-    return numeric_cols
+SELECTED_STATS = ['Gls', 'Ast', 'xG', 'CrdY', 'CrdR', 'PrgP']
 
 def format_player_list(series, stat_name):
     output = ""
@@ -45,14 +26,17 @@ except Exception as e:
     print(f"Error loading CSV: {e}")
     exit()
 
-numeric_stat_cols = get_numeric_columns(df.copy())
-
-for col in numeric_stat_cols:
-    df[col] = pd.to_numeric(df[col], errors='coerce')
+for col in SELECTED_STATS:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
 
 try:
     with open(OUTPUT_TOP_PLAYERS_FILE, 'w', encoding='utf-8') as f:
-        for col in numeric_stat_cols:
+        for col in SELECTED_STATS:
+            if col not in df.columns:
+                f.write(f"Statistic: {col}\n")
+                f.write(f"  (No data available for this statistic)\n\n")
+                continue
             f.write(f"Statistic: {col}\n")
             f.write("-" * (len(col) + 11) + "\n")
             df_col_cleaned = df.dropna(subset=[col])
@@ -70,19 +54,18 @@ except Exception as e:
     print(f"Error writing to {OUTPUT_TOP_PLAYERS_FILE}: {e}")
 
 try:
-    overall_median = df[numeric_stat_cols].median()
-    overall_mean = df[numeric_stat_cols].mean()
-    overall_std = df[numeric_stat_cols].std()
+    overall_median = df[SELECTED_STATS].median()
+    overall_mean = df[SELECTED_STATS].mean()
+    overall_std = df[SELECTED_STATS].std()
 
-    grouped_by_team = df.groupby('Squad')[numeric_stat_cols]
+    grouped_by_team = df.groupby('Squad')[SELECTED_STATS]
     team_median = grouped_by_team.median()
     team_mean = grouped_by_team.mean()
     team_std = grouped_by_team.std()
 
     results_list = []
-
     overall_row = {'Squad': 'all'}
-    for col in numeric_stat_cols:
+    for col in SELECTED_STATS:
         overall_row[f'Median of {col}'] = overall_median.get(col)
         overall_row[f'Mean of {col}'] = overall_mean.get(col)
         overall_row[f'Std of {col}'] = overall_std.get(col)
@@ -90,7 +73,7 @@ try:
 
     for team in team_median.index:
         team_row = {'Squad': team}
-        for col in numeric_stat_cols:
+        for col in SELECTED_STATS:
             team_row[f'Median of {col}'] = team_median.loc[team, col] if team in team_median.index else None
             team_row[f'Mean of {col}'] = team_mean.loc[team, col] if team in team_mean.index else None
             team_row[f'Std of {col}'] = team_std.loc[team, col] if team in team_std.index else None
@@ -100,14 +83,14 @@ try:
     results_df = results_df.set_index('Squad')
 
     ordered_columns = ['Squad']
-    for col in numeric_stat_cols:
+    for col in SELECTED_STATS:
         ordered_columns.extend([f'Median of {col}', f'Mean of {col}', f'Std of {col}'])
-
     existing_ordered_columns = [col for col in ordered_columns if col in results_df.columns or col == 'Squad']
     results_df = results_df.reset_index()
     results_df = results_df[existing_ordered_columns]
     results_df = results_df.set_index('Squad')
 
+    os.makedirs(os.path.dirname(OUTPUT_STATS_FILE) if os.path.dirname(OUTPUT_STATS_FILE) else '.', exist_ok=True)
     results_df.to_csv(OUTPUT_STATS_FILE, encoding='utf-8')
 except Exception as e:
     print(f"Error calculating/saving descriptive statistics: {e}")
@@ -120,7 +103,9 @@ team_hist_dir = os.path.join(OUTPUT_HISTOGRAM_DIR, 'teams')
 if not os.path.exists(team_hist_dir):
     os.makedirs(team_hist_dir)
 
-for col in numeric_stat_cols:
+for col in SELECTED_STATS:
+    if col not in df.columns:
+        continue
     plt.style.use('ggplot')
     plt.figure(figsize=(10, 6))
     df[col].dropna().hist(bins=20)
@@ -131,7 +116,7 @@ for col in numeric_stat_cols:
     try:
         plt.savefig(os.path.join(OUTPUT_HISTOGRAM_DIR, f'{col}_all_players.png'))
     except Exception as e:
-        print(f"    Error saving plot for {col} (all players): {e}")
+        print(f"Error saving plot for {col} (all players): {e}")
     plt.close()
 
     teams = df['Squad'].unique()
@@ -148,11 +133,11 @@ for col in numeric_stat_cols:
                 safe_team_name = "".join(c if c.isalnum() else "_" for c in team)
                 plt.savefig(os.path.join(team_hist_dir, f'{col}_{safe_team_name}.png'))
             except Exception as e:
-                print(f"    Error saving plot for {col} ({team}): {e}")
+                print(f"Error saving plot for {col} ({team}): {e}")
         plt.close()
 
 top_teams = {}
-for col in KEY_TEAM_STATS:
+for col in SELECTED_STATS:
     mean_col_name = f'Mean of {col}'
     if mean_col_name in results_df.columns:
         teams_only_df = results_df.drop('all', errors='ignore')
@@ -163,7 +148,7 @@ for col in KEY_TEAM_STATS:
 
 if not results_df.empty:
     print("Identifying teams with highest average scores per statistic:")
-    for col in KEY_TEAM_STATS:
+    for col in SELECTED_STATS:
         mean_col_name = f'Mean of {col}'
         if mean_col_name in results_df.columns:
             teams_only_df = results_df.drop('all', errors='ignore')
@@ -188,8 +173,8 @@ if not results_df.empty:
         print(f"  - Team with highest avg Expected Goals (xG): {top_xg_team}")
 
         best_performing_team = team_mentions.idxmax() if not team_mentions.empty else "Undetermined"
-        print(f"\n  Conclusion: Based on the analyzed statistics (especially {', '.join(KEY_TEAM_STATS)}),")
+        print(f"\n  Conclusion: Based on the analyzed statistics (especially {', '.join(SELECTED_STATS)}),")
         print(f"  '{best_performing_team}' appears to be performing strongly, frequently leading in average statistics.")
-        print(f"  However, a comprehensive analysis would require more stats (defensive, etc.) and context.")
+        print(f"  However, a comprehensive analysis would require more stats and context.")
 
 print("\n--- Analysis Complete ---")

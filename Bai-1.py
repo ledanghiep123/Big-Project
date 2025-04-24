@@ -40,7 +40,40 @@ try:
             except ValueError:
                 continue
 
-    df = pd.DataFrame(players_over_90)
+    df_standard = pd.DataFrame(players_over_90)
+
+    additional_tables = [
+        'stats_shooting',
+        'stats_passing',
+        'stats_defense',
+        'stats_possession',
+        'stats_misc',
+        'stats_keeper',
+        'stats_keeper_adv'
+    ]
+
+    additional_dfs = []
+    for table_id in additional_tables:
+        table = soup.find('table', {'id': table_id})
+        if table:
+            players_data = []
+            for row in table.find('tbody').find_all('tr'):
+                name_col = row.find('th', {'data-stat': 'player'}) or row.find('td', {'data-stat': 'player'})
+                if name_col:
+                    player_info = {
+                        'player': name_col.text.strip(),
+                    }
+                    for stat in row.find_all('td'):
+                        stat_name = stat.get('data-stat')
+                        if stat_name:
+                            player_info[stat_name] = stat.text.strip()
+                    players_data.append(player_info)
+            if players_data:
+                additional_dfs.append(pd.DataFrame(players_data))
+
+    df = df_standard
+    for additional_df in additional_dfs:
+        df = pd.merge(df, additional_df, on='player', how='left')
 
     df = df.rename(columns={
                 'player': 'Player',

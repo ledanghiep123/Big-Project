@@ -61,7 +61,6 @@ def scrape_transfer_values(players_df, headless=True):
         player = row['Player']
         transfer_value = None
 
-        # Thử Transfermarkt
         for attempt in range(3):
             try:
                 print(f"Attempting for {player}")
@@ -79,14 +78,13 @@ def scrape_transfer_values(players_df, headless=True):
             except Exception as e:
                 time.sleep(5)
 
-        # Nếu Transfermarkt thất bại, thử FootballTransfers
         if not transfer_value:
             for attempt in range(3):
                 try:
                     print(f"Attempting {player}")
                     driver.get(f"{FOOTBALLTRANSFERS_URL}{player.replace(' ', '+')}")
                     transfer_value = WebDriverWait(driver, 20).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "div.market-value"))  # Cần xác minh selector này
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "div.market-value"))
                     ).text
                     print(f"Scraped {player}: {transfer_value}")
                     break
@@ -145,24 +143,18 @@ if not available_features:
     print("No valid features. Exiting.")
     exit()
 
-# Filter df to include only players in players_900
-df_900 = df[df['Player'].isin(players_900['Player'])]
+df['transfer_value'] = merged_data['transfer_value']
 
-# Create X using the filtered DataFrame
-X = df_900[available_features].fillna(0)
-y = merged_data['transfer_value'].fillna(0)
+valid_df = df.dropna(subset=available_features + ['transfer_value'])
 
-# Verify that X and y have the same number of samples
-if len(X) != len(y):
-    print(f"Error: X has {len(X)} samples, but y has {len(y)} samples. Check data alignment.")
-    exit()
-
-corr_matrix = X.corrwith(y)
-selected_features = corr_matrix[abs(corr_matrix) > 0.2].index.tolist() or available_features
+X = valid_df[available_features]
+y = valid_df['transfer_value']
+players = valid_df['Player']
 
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X[selected_features])
+X_scaled = scaler.fit_transform(X)
 X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
 model = RandomForestRegressor(n_estimators=100, random_state=42)
 model.fit(X_train, y_train)
 
@@ -171,10 +163,12 @@ mse = mean_squared_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
 print(f"MSE: {mse:.2f}, R^2: {r2:.2f}")
 
+full_pred = model.predict(X_scaled)
+
 predictions = pd.DataFrame({
-    'Player': players_900['Player'],
-    'Actual_Value': y,
-    'Predicted_Value': model.predict(scaler.transform(X[selected_features]))
+    'Player': players.values,
+    'Actual_Value': y.values,
+    'Predicted_Value': full_pred
 })
 predictions.to_csv(PREDICT_CSV, index=False, encoding='utf-8-sig')
 
